@@ -19,3 +19,8 @@ def create_promo(promo: schemas.PromoCreate, x_user_role: Optional[str] = Header
     if not new_promo:
         raise HTTPException(status_code=400, detail="Promo code already exists")
     return new_promo
+
+@router.get("/", response_model=List[schemas.Promo])
+def get_promos():
+    """(Admin) Menampilkan semua kode promo yang aktif."""
+    return services.get_all_promos()
