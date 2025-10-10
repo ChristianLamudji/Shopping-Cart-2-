@@ -10,6 +10,10 @@ promos_db: Dict[str, Dict] = {
     }
 }
 
+def get_all_promos() -> list:
+    """Mengembalikan semua kode promo yang ada di database."""
+    return list(promos_db.values())
+
 def find_promo_by_code(code: str) -> Optional[Dict]:
     return promos_db.get(code)
 
