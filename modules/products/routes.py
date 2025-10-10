@@ -1,13 +1,23 @@
 from typing import List
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Header
+from typing import Optional
 from . import schemas
 from . import services
 
 router = APIRouter()
 
-@router.post("/", response_model=schemas.Product, status_code=status.HTTP_201_CREATED) # <-- BENAR
-def create_product(product: schemas.ProductCreate):
+@router.post("/", response_model=schemas.Product, status_code=status.HTTP_201_CREATED)
+def create_product(
+    product: schemas.ProductCreate, 
+    x_user_role: Optional[str] = Header(None)
+):
     """(Admin) Menambahkan produk baru."""
+
+    if x_user_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Only admin can add products"
+        )
     return services.create_new_product(product)
 
 @router.get("/", response_model=List[schemas.Product])

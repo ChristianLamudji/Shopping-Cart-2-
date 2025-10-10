@@ -1,107 +1,110 @@
-from typing import Dict, Optional, List
-from .schemas import CartItemCreate
+from typing import List, Dict, Optional
+from fastapi import HTTPException
 from modules.products import services as product_services
 from modules.promos import services as promo_services
 from modules.transactions import services as transaction_services
 
-# Keranjang belanja global (karena tidak ada user session)
-cart_db: Dict[str, List[Dict]] = {"items": []}
+cart_db: Dict[int, int] = {}
 
 def get_current_cart() -> Dict:
-    total_price = 0
-    detailed_items = []
+    items_in_cart = []
+    total_price = 0.0
+
+    for product_id, quantity in cart_db.items():
+        product_info = product_services.find_product_by_id(product_id)
+        if product_info:
+            cart_item = {
+                "product_id": product_id,
+                "name": product_info["name"],
+                "quantity": quantity,
+                "price": product_info["price"],
+                "description": product_info["description"] # <-- DIUBAH
+            }
+            items_in_cart.append(cart_item)
+            total_price += product_info["price"] * quantity
+
+    return {"items": items_in_cart, "total_price": total_price}
+
+def add_item_to_cart(product_id: int, quantity: int) -> Dict:
+    product_info = product_services.find_product_by_id(product_id)
+    if not product_info:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    current_quantity_in_cart = cart_db.get(product_id, 0)
+    if product_info["stock"] < current_quantity_in_cart + quantity:
+        raise HTTPException(status_code=400, detail="Insufficient stock")
     
-    for item in cart_db["items"]:
-        product = product_services.find_product_by_id(item["product_id"])
-        if product:
-            item_total = product["price"] * item["quantity"]
-            total_price += item_total
-            detailed_items.append({
-                "product_id": product["id"],
-                "name": product["name"],
-                "price": product["price"],
-                "quantity": item["quantity"]
-            })
-            
-    return {"items": detailed_items, "total_price": total_price}
+    cart_db[product_id] = current_quantity_in_cart + quantity
+    return get_current_cart()
 
+# KODE BARU UNTUK UPDATE KUANTITAS
+def update_item_quantity(product_id: int, new_quantity: int) -> Optional[Dict]:
+    """Mengubah kuantitas produk yang ada di keranjang."""
+    if product_id not in cart_db:
+        return None
 
-def add_item_to_cart(item_data: CartItemCreate) -> Dict:
-    product = product_services.find_product_by_id(item_data.product_id)
-    if not product:
-        raise ValueError("Product not found")
-    
-    if product["stock"] < item_data.quantity:
-        raise ValueError("Insufficient stock")
+    product_info = product_services.find_product_by_id(product_id)
+    if not product_info or product_info["stock"] < new_quantity:
+        raise ValueError("Insufficient stock for the new quantity")
 
-    for existing_item in cart_db["items"]:
-        if existing_item["product_id"] == item_data.product_id:
-            new_quantity = existing_item["quantity"] + item_data.quantity
-            if product["stock"] < new_quantity:
-                raise ValueError("Insufficient stock for updated quantity")
-            existing_item["quantity"] = new_quantity
-            return get_current_cart()
-
-    # UPDATED: Menggunakan .model_dump() sebagai pengganti .dict()
-    cart_db["items"].append(item_data.model_dump())
+    cart_db[product_id] = new_quantity
     return get_current_cart()
 
 def remove_item_from_cart(product_id: int) -> Optional[Dict]:
-    item_to_remove = None
-    for item in cart_db["items"]:
-        if item["product_id"] == product_id:
-            item_to_remove = item
-            break
-    
-    if item_to_remove:
-        cart_db["items"].remove(item_to_remove)
+    if product_id in cart_db:
+        del cart_db[product_id]
         return get_current_cart()
-    
     return None
 
 def process_checkout(promo_code: Optional[str] = None) -> Dict:
-    cart_details = get_current_cart()
-    if not cart_details["items"]:
-        raise ValueError("Cart is empty")
+    if not cart_db:
+        raise HTTPException(status_code=400, detail="Cart is empty")
 
+    cart_details = get_current_cart()
     original_price = cart_details["total_price"]
     final_price = original_price
     discount_applied = 0.0
-    
-    for item in cart_details["items"]:
-        product = product_services.find_product_by_id(item["product_id"])
-        if not product or product["stock"] < item["quantity"]:
-            raise ValueError(f"Insufficient stock for product: {item['name']}")
 
+    # Validasi stok sebelum checkout
+    for item in cart_details["items"]:
+        product_info = product_services.find_product_by_id(item["product_id"])
+        if not product_info or product_info["stock"] < item["quantity"]:
+            raise HTTPException(status_code=400, detail=f"Insufficient stock for product: {item['name']}")
+
+    # Proses promo
     if promo_code:
-        promo = promo_services.find_promo_by_code(promo_code)
-        if not promo:
-            raise ValueError("Invalid promo code")
+        promo_info = promo_services.find_promo_by_code(promo_code)
+        if not promo_info:
+            raise HTTPException(status_code=404, detail="Promo code not found")
         
-        discountable_amount = 0
-        for item in cart_details["items"]:
-            if item["product_id"] in promo["product_ids"]:
-                discountable_amount += item["price"] * item["quantity"]
+        applicable_items_price = sum(
+            item["price"] * item["quantity"] 
+            for item in cart_details["items"] 
+            if item["product_id"] in promo_info["product_ids"]
+        )
         
-        discount_applied = discountable_amount * (promo["discount_percentage"] / 100)
-        final_price = original_price - discount_applied
+        discount_applied = applicable_items_price * (promo_info["discount_percentage"] / 100)
+        final_price -= discount_applied
 
+    # Kurangi stok
     for item in cart_details["items"]:
-        product = product_services.find_product_by_id(item["product_id"])
-        product["stock"] -= item["quantity"]
+        product_info = product_services.find_product_by_id(item["product_id"])
+        if product_info:
+            product_info["stock"] -= item["quantity"]
 
+    # Buat transaksi
     transaction = transaction_services.create_transaction(
         items=cart_details["items"],
         total_price=final_price,
         promo_used=promo_code
     )
     
-    cart_db["items"].clear()
-    
+    cart_db.clear()
+
     return {
-        "transaction_id": transaction["id"],
+        "message": "Checkout successful!",
         "original_price": original_price,
         "discount_applied": discount_applied,
         "final_price": final_price,
-        "message": "Checkout successful!"
+        "transaction_details": transaction
     }
