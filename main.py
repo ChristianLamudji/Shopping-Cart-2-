@@ -10,7 +10,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Menggabungkan router dari setiap modul
+
 app.include_router(product_routes.router, prefix="/products", tags=["📦 Products"])
 app.include_router(cart_routes.router, prefix="/cart", tags=["🛒 Cart"])
 app.include_router(promo_routes.router, prefix="/promos", tags=["💲 Promos"])
