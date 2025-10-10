@@ -26,7 +26,6 @@ class CheckoutInfo(BaseModel):
     final_price: float
     transaction_details: dict
 
-# KODE BARU UNTUK UPDATE KUANTITAS
 class CartItemUpdate(BaseModel):
     """Skema untuk mengubah kuantitas item di keranjang."""
     quantity: int = Field(..., ge=1, description="Jumlah baru harus minimal 1")
